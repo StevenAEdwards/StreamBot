@@ -28,23 +28,19 @@ app.post('/play', async (req, res) => {
         const guild = streamer.client.guilds.cache.get(guildId);
         if (!guild) return res.status(404).send('Guild not found.');
 
-        // Ensure the channel exists and is a voice channel
         const channel = guild.channels.cache.get(channelId);
         if (!channel || channel.type !== 'GUILD_VOICE') {
             return res.status(404).send('Voice channel not found or invalid.');
         }
 
-        // Check if the bot is already in the target voice channel
         const currentVoiceState = streamer.client.user.voice;
 
         if (currentVoiceState && currentVoiceState.channelId === channelId) {
             console.log(`Already connected to voice channel ${guildId}/${channelId}`);
         } else {
-            // If not in the target channel, join the channel
             console.log(`Joining voice channel ${guildId}/${channelId}`);
             await streamer.joinVoice(guildId, channelId);
 
-            // If it's a Stage Channel, un-suppress the bot
             if (channel instanceof StageChannel) {
                 await streamer.client.user.voice.setSuppressed(false);
             }
@@ -59,7 +55,6 @@ app.post('/play', async (req, res) => {
             return res.status(500).send('Failed to fetch stream metadata.');
         }
 
-        // Handle stream switching or starting a new stream
         if (currentVoiceState && currentVoiceState.streaming) {
             console.log('Already streaming, switching streams...');
             await switchStreams(streamURL, metadata);
@@ -78,7 +73,6 @@ app.post('/play', async (req, res) => {
 
 app.post('/disconnect', async (req, res) => {
     try {
-        // Step 1: Stop the stream
         if (streamer.voiceConnection?.streamConnection) {
             console.log("Stopping the current stream...");
             const stream = streamer.voiceConnection.streamConnection;
@@ -87,12 +81,8 @@ app.post('/disconnect', async (req, res) => {
             streamer.stopStream();
             command?.kill('SIGINT');
         }
-
-        // Step 2: Leave the voice channel
         console.log("Leaving the voice channel...");
         await streamer.leaveVoice();
-
-        // Step 3: Respond with success
         return res.status(200).send('Successfully disconnected and stopped the stream.');
     } catch (error) {
         console.error('Error during disconnect:', error);
@@ -134,7 +124,6 @@ async function switchStreams(streamURL, metadata) {
 
         console.log("Stopping the current stream...");
 
-        // Step 1: Stop the current stream, if any
         if (streamer.voiceConnection.streamConnection) {
             const stream = streamer.voiceConnection.streamConnection;
             stream.setSpeaking(false);
@@ -142,21 +131,17 @@ async function switchStreams(streamURL, metadata) {
             streamer.stopStream();
             command?.kill('SIGINT');
 
-            // Wait for the process to fully stop
             await new Promise((resolve) => setTimeout(resolve, 1000));
         } else {
             console.log("No active stream to stop.");
         }
 
-        // Step 2: Start the new stream
         console.log("Starting new stream...");
         const streamUdpConn = await streamer.createStream(generateStreamOptions(metadata));
 
-        // Set video and speaking status for the new stream
         streamUdpConn.mediaConnection.setSpeaking(true);
         streamUdpConn.mediaConnection.setVideoStatus(true);
 
-        // Play the video on the new stream connection
         await playVideo(streamURL, streamUdpConn);
 
         console.log("Stream switched successfully.");
