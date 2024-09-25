@@ -1,0 +1,15 @@
+services:
+  streambot:
+    image: stream_bot  
+    container_name: streambot
+    ports:
+      - "3123:3000"
+    stdin_open: true  
+    tty: true        
+    devices:
+      - /dev/dri:/dev/dri
+    privileged: true  
+    environment:
+        DISCORD_TOKEN: ""
+        HARDWARE_ACCELERATION: "true"
+        FPS: 30

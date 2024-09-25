@@ -46,7 +46,6 @@ app.post('/play', async (req, res) => {
             }
         }
 
-        // Fetch video metadata
         let metadata;
         try {
             metadata = await getInputMetadata(streamURL);
@@ -73,6 +72,16 @@ app.post('/play', async (req, res) => {
 
 app.post('/disconnect', async (req, res) => {
     try {
+        await disconnectFromVoice();
+        return res.status(200).send('Successfully disconnected and stopped the stream.');
+    } catch (error) {
+        console.error('Error during disconnect:', error);
+        return res.status(500).send('Failed to disconnect.');
+    }
+});
+
+async function disconnectFromVoice() {
+    try {
         if (streamer.voiceConnection?.streamConnection) {
             console.log("Stopping the current stream...");
             const stream = streamer.voiceConnection.streamConnection;
@@ -83,15 +92,15 @@ app.post('/disconnect', async (req, res) => {
         }
         console.log("Leaving the voice channel...");
         await streamer.leaveVoice();
-        return res.status(200).send('Successfully disconnected and stopped the stream.');
+        console.log("Successfully disconnected from the voice channel.");
     } catch (error) {
         console.error('Error during disconnect:', error);
-        return res.status(500).send('Failed to disconnect.');
+        throw new Error('Failed to disconnect');
     }
-});
+}
 
 async function playVideo(video, metadata, udpConn) {
-    console.log("Metadata for video:", JSON.stringify(metadata, null, 2));
+
     let includeAudio = inputHasAudio(metadata);
     console.log('Started playing video');
 
@@ -115,12 +124,33 @@ async function playVideo(video, metadata, udpConn) {
     command?.kill("SIGINT");
 }
 
+// async function switchStreams(streamURL, metadata) {
+//     try {
+//         if (!streamer.voiceConnection) {
+//             console.log("Bot must be in a voice channel");
+//             return;
+//         }
+
+//         console.log("Stopping the current stream...");
+//         await disconnectFromVoice(); // Reuse the disconnect logic
+
+//         console.log("Starting new stream...");
+//         const streamUdpConn = await streamer.createStream(generateStreamOptions(metadata));
+
+//         streamUdpConn.mediaConnection.setSpeaking(true);
+//         streamUdpConn.mediaConnection.setVideoStatus(true);
+
+//         await playVideo(streamURL, streamUdpConn);
+
+//         console.log("Stream switched successfully.");
+//     } catch (error) {
+//         console.error('Error while switching streams:', error);
+//         throw new Error('Failed to switch streams');
+//     }
+// }
+
 async function switchStreams(streamURL, metadata) {
     try {
-        if (!streamer.voiceConnection) {
-            console.log("Bot must be in a voice channel");
-            return;
-        }
 
         console.log("Stopping the current stream...");
 
@@ -142,7 +172,7 @@ async function switchStreams(streamURL, metadata) {
         streamUdpConn.mediaConnection.setSpeaking(true);
         streamUdpConn.mediaConnection.setVideoStatus(true);
 
-        await playVideo(streamURL, streamUdpConn);
+        await playVideo(streamURL, metadata, streamUdpConn);
 
         console.log("Stream switched successfully.");
     } catch (error) {
@@ -150,7 +180,6 @@ async function switchStreams(streamURL, metadata) {
         throw new Error('Failed to switch streams');
     }
 }
-
 
 function generateStreamOptions(metadata) {
     const videoStream = metadata.streams.find(stream => stream.codec_type === 'video');
