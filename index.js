@@ -168,40 +168,59 @@ function generateStreamOptions(metadata) {
         throw new Error('No video stream found in the metadata');
     }
 
-    let width, height, bitrateKbps, maxBitrateKbps, videoCodec;
-    
-    const inputWidth = videoStream.width;
     const inputHeight = videoStream.height;
-    
-    if (inputHeight < 720) {
-        width = 1280;
-        height = 720;
-        bitrateKbps = 2500;
-        maxBitrateKbps = 3500; 
+    const inputFps = eval(videoStream.avg_frame_rate);
+
+    let defaultHeight, defaultWidth, defaultBitrateKbps, defaultMaxBitrateKbps, defaultFps;
+
+    if (inputFps > 45) {
+        defaultFps = 60; 
+    } else if (inputFps >= 15) {
+        defaultFps = 30; 
     } else {
-        width = 1920;
-        height = 1080;
-        bitrateKbps = 3000; 
-        maxBitrateKbps = 5000; 
+        defaultFps = 15; 
     }
 
-    const inputFps = eval(videoStream.avg_frame_rate);
-    if (process.env.FPS) {
-        fps = process.env.FPS;
-    } else {
-        if (inputFps > 45) {
-            fps = 60;
-        } else if (inputFps >= 20) {
-            fps = 30;
+    if (inputHeight < 720) {
+        defaultHeight = 720; 
+        defaultWidth = 1280;
+
+        if (defaultFps === 60) {
+            defaultBitrateKbps = 3500;
+            defaultMaxBitrateKbps = 5000;
+        } else if (defaultFps === 30) {
+            defaultBitrateKbps = 2500;
+            defaultMaxBitrateKbps = 3500;
         } else {
-            fps = 15;
+            defaultBitrateKbps = 1500;
+            defaultMaxBitrateKbps = 2500;
+        }
+    } else {
+        defaultHeight = 1080; 
+        defaultWidth = 1920;
+
+        if (defaultFps === 60) {
+            defaultBitrateKbps = 6000;
+            defaultMaxBitrateKbps = 8000;
+        } else if (defaultFps === 30) {
+            defaultBitrateKbps = 4000;
+            defaultMaxBitrateKbps = 6000;
+        } else {
+            defaultBitrateKbps = 2500;
+            defaultMaxBitrateKbps = 3500;
         }
     }
 
+    const height = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10) : defaultHeight;
+    const width = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10) : defaultWidth;
+    const fps = process.env.FPS ? parseInt(process.env.FPS, 10) : defaultFps;
+    const bitrateKbps = process.env.BITRATE_KBPS ? parseInt(process.env.BITRATE_KBPS, 10) : defaultBitrateKbps;
+    const maxBitrateKbps = process.env.MAX_BITRATE_KBPS ? parseInt(process.env.MAX_BITRATE_KBPS, 10) : defaultMaxBitrateKbps;
     const hardware_acceleration = process.env.HARDWARE_ACCELERATION === 'true' ? true : false;
 
+    let videoCodec;
     if (videoStream.codec_name === 'vp8' || videoStream.codec_name === 'vp9') {
-        videoCodec = 'VP8'; 
+        videoCodec = 'VP8';
     } else {
         videoCodec = 'H264';
     }

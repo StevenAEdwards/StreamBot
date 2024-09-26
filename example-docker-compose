@@ -1,6 +1,6 @@
 services:
   streambot:
-    image: stream_bot  
+    image: stevenedwards/streambot:latest
     container_name: streambot
     ports:
       - "3123:3000"
@@ -11,5 +11,10 @@ services:
     privileged: true  
     environment:
         DISCORD_TOKEN: ""
+        #Optional Variables
         HARDWARE_ACCELERATION: "true"
         FPS: 30
+        WIDTH: 1920
+        HEIGHT: 1080
+        BITRATEKBPS: 3000
+        MAXBITRATEKBPS: 5000
