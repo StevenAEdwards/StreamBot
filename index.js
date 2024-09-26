@@ -120,7 +120,7 @@ async function playVideo(video, metadata, udpConn) {
         } else {
             const res = await streamLivestreamVideo(video, udpConn, includeAudio);
         }
-        console.log('Finished playing video: ' + res);
+        // console.log('Finished playing video: ' + res);
     } catch (e) {
         console.log('Error while playing video:', e);
     } finally {
