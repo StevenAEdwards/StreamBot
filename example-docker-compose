@@ -16,5 +16,5 @@ services:
         FPS: 30
         WIDTH: 1920
         HEIGHT: 1080
-        BITRATEKBPS: 3000
-        MAXBITRATEKBPS: 5000
+        BITRATE_KBPS: 3000
+        MAX_BITRATE_KBPS: 5000

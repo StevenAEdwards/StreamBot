@@ -212,7 +212,7 @@ function generateStreamOptions(metadata) {
     }
 
     const height = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10) : defaultHeight;
-    const width = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10) : defaultWidth;
+    const width = process.env.WIDTH ? parseInt(process.env.WIDTH, 10) : defaultWidth;
     const fps = process.env.FPS ? parseInt(process.env.FPS, 10) : defaultFps;
     const bitrateKbps = process.env.BITRATE_KBPS ? parseInt(process.env.BITRATE_KBPS, 10) : defaultBitrateKbps;
     const maxBitrateKbps = process.env.MAX_BITRATE_KBPS ? parseInt(process.env.MAX_BITRATE_KBPS, 10) : defaultMaxBitrateKbps;
