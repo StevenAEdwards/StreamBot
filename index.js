@@ -54,16 +54,22 @@ app.post('/play', async (req, res) => {
             return res.status(500).send('Failed to fetch stream metadata.');
         }
 
-        if (currentVoiceState && currentVoiceState.streaming) {
-            console.log('Already streaming, switching streams...');
-            await switchStreams(streamURL, metadata);
-        } else {
-            console.log('No active stream, starting new stream...');
-            const streamUdpConn = await streamer.createStream(generateStreamOptions(metadata));
-            await playVideo(streamURL, metadata, streamUdpConn);
-        }
+        (async () => {
+            try {
+                if (currentVoiceState && currentVoiceState.streaming) {
+                    console.log('Already streaming, switching streams...');
+                    await switchStreams(streamURL, metadata);
+                } else {
+                    console.log('No active stream, starting new stream...');
+                    const streamUdpConn = await streamer.createStream(generateStreamOptions(metadata));
+                    await playVideo(streamURL, metadata, streamUdpConn);
+                }
+            } catch (streamError) {
+                console.error('Error while streaming:', streamError);
+            }
+        })();
 
-        return res.status(200).send('Streaming started.');
+        return res.status(200).send('Streaming started successfully.');
     } catch (error) {
         console.error('Error while streaming:', error);
         return res.status(500).send('Failed to start streaming.');
