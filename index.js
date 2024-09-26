@@ -124,31 +124,6 @@ async function playVideo(video, metadata, udpConn) {
     command?.kill("SIGINT");
 }
 
-// async function switchStreams(streamURL, metadata) {
-//     try {
-//         if (!streamer.voiceConnection) {
-//             console.log("Bot must be in a voice channel");
-//             return;
-//         }
-
-//         console.log("Stopping the current stream...");
-//         await disconnectFromVoice(); // Reuse the disconnect logic
-
-//         console.log("Starting new stream...");
-//         const streamUdpConn = await streamer.createStream(generateStreamOptions(metadata));
-
-//         streamUdpConn.mediaConnection.setSpeaking(true);
-//         streamUdpConn.mediaConnection.setVideoStatus(true);
-
-//         await playVideo(streamURL, streamUdpConn);
-
-//         console.log("Stream switched successfully.");
-//     } catch (error) {
-//         console.error('Error while switching streams:', error);
-//         throw new Error('Failed to switch streams');
-//     }
-// }
-
 async function switchStreams(streamURL, metadata) {
     try {
 
