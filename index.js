@@ -114,13 +114,7 @@ async function playVideo(video, metadata, udpConn) {
     udpConn.mediaConnection.setVideoStatus(true);
 
     try {
-        if (process.env.HARDWARE_ACCELERATION) {
-            console.log('Using VAAPI hardware acceleration...');
-            const res = await streamLivestreamVideo(video, udpConn, includeAudio, { hwaccel: 'vaapi' });
-        } else {
-            const res = await streamLivestreamVideo(video, udpConn, includeAudio);
-        }
-        // console.log('Finished playing video: ' + res);
+        const res = await streamLivestreamVideo(video, udpConn, includeAudio);
     } catch (e) {
         console.log('Error while playing video:', e);
     } finally {
@@ -168,55 +162,57 @@ function generateStreamOptions(metadata) {
         throw new Error('No video stream found in the metadata');
     }
 
+    const frameRateParts = videoStream.avg_frame_rate.split('/');
+    const inputFps = frameRateParts.length === 2 ? parseInt(frameRateParts[0], 10) / parseInt(frameRateParts[1], 10) : parseFloat(videoStream.avg_frame_rate);
+    
     const inputHeight = videoStream.height;
-    const inputFps = eval(videoStream.avg_frame_rate);
+    const inputWidth = videoStream.width;
 
-    let defaultHeight, defaultWidth, defaultBitrateKbps, defaultMaxBitrateKbps, defaultFps;
+    let defaultBitrateKbps, defaultMaxBitrateKbps;
 
-    if (inputFps > 45) {
-        defaultFps = 60; 
-    } else if (inputFps >= 15) {
-        defaultFps = 30; 
-    } else {
-        defaultFps = 15; 
-    }
-
-    if (inputHeight < 720) {
-        defaultHeight = 720; 
-        defaultWidth = 1280;
-
-        if (defaultFps === 60) {
-            defaultBitrateKbps = 3500;
-            defaultMaxBitrateKbps = 5000;
-        } else if (defaultFps === 30) {
-            defaultBitrateKbps = 2500;
-            defaultMaxBitrateKbps = 3500;
-        } else {
-            defaultBitrateKbps = 1500;
-            defaultMaxBitrateKbps = 2500;
-        }
-    } else {
-        defaultHeight = 1080; 
-        defaultWidth = 1920;
-
-        if (defaultFps === 60) {
-            defaultBitrateKbps = 6000;
-            defaultMaxBitrateKbps = 8000;
-        } else if (defaultFps === 30) {
-            defaultBitrateKbps = 4000;
+    if (inputFps >= 45) { 
+        if (inputHeight >= 1080) {
+            defaultBitrateKbps = 6000;  
+            defaultMaxBitrateKbps = 9000;
+        } else if (inputHeight >= 720) {
+            defaultBitrateKbps = 4000;  
             defaultMaxBitrateKbps = 6000;
         } else {
-            defaultBitrateKbps = 2500;
+            defaultBitrateKbps = 2500;  
             defaultMaxBitrateKbps = 3500;
+        }
+    } else if (inputFps >= 15) { 
+        if (inputHeight >= 1080) {
+            defaultBitrateKbps = 5000;  
+            defaultMaxBitrateKbps = 7000;
+        } else if (inputHeight >= 720) {
+            defaultBitrateKbps = 3000;  
+            defaultMaxBitrateKbps = 4500;
+        } else {
+            defaultBitrateKbps = 2000;  
+            defaultMaxBitrateKbps = 3000;
+        }
+    } else {
+        if (inputHeight >= 1080) {
+            defaultBitrateKbps = 4000;  
+            defaultMaxBitrateKbps = 6000;
+        } else if (inputHeight >= 720) {
+            defaultBitrateKbps = 2500;  
+            defaultMaxBitrateKbps = 3500;
+        } else {
+            defaultBitrateKbps = 1500;   
+            defaultMaxBitrateKbps = 2000;
         }
     }
 
-    const height = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10) : defaultHeight;
-    const width = process.env.WIDTH ? parseInt(process.env.WIDTH, 10) : defaultWidth;
-    const fps = process.env.FPS ? parseInt(process.env.FPS, 10) : defaultFps;
+    const height = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10) : inputHeight;
+    const width = process.env.WIDTH ? parseInt(process.env.WIDTH, 10) : inputWidth;
+    const fps = process.env.FPS ? parseInt(process.env.FPS, 10) : Math.round(inputFps);
     const bitrateKbps = process.env.BITRATE_KBPS ? parseInt(process.env.BITRATE_KBPS, 10) : defaultBitrateKbps;
     const maxBitrateKbps = process.env.MAX_BITRATE_KBPS ? parseInt(process.env.MAX_BITRATE_KBPS, 10) : defaultMaxBitrateKbps;
-    const hardware_acceleration = process.env.HARDWARE_ACCELERATION === 'true' ? true : false;
+    const hardwareAcceleratedDecoding = process.env.HARDWARE_ACCELERATION === 'true';
+    const h26xPreset = process.env.H26X_PRESET ? process.env.H26X_PRESET : "ultrafast";
+    const readAtNativeFps = process.env.READ_AT_NATIVE_FPS ? process.env.READ_AT_NATIVE_FPS : 'true';
 
     let videoCodec;
     if (videoStream.codec_name === 'vp8' || videoStream.codec_name === 'vp9') {
@@ -231,8 +227,10 @@ function generateStreamOptions(metadata) {
         fps,
         bitrateKbps,
         maxBitrateKbps,
-        hardware_acceleration,
-        videoCodec
+        hardwareAcceleratedDecoding,
+        videoCodec,
+        h26xPreset,
+        readAtNativeFps
     };
 }
 
