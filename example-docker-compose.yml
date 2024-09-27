@@ -18,3 +18,5 @@ services:
         HEIGHT: 1080
         BITRATE_KBPS: 3000
         MAX_BITRATE_KBPS: 5000
+        H26X_PRESET: "medium"
+        READ_AT_NATIVE_FPS: "true"
