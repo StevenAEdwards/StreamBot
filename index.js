@@ -1,7 +1,6 @@
 const express = require('express');
 const { Client, StageChannel } = require('discord.js-selfbot-v13');
 const { command, streamLivestreamVideo, getInputMetadata, inputHasAudio, Streamer } = require('@dank074/discord-video-stream');
-
 //API
 const app = express();
 app.use(express.json()); 
@@ -9,7 +8,6 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`API server is listening on port ${port}`);
 });
-
 // Discord Login
 const streamer = new Streamer(new Client());
 streamer.client.login(process.env.DISCORD_TOKEN);
@@ -18,7 +16,7 @@ streamer.client.on('ready', () => {
 });
 
 app.post('/play', async (req, res) => {
-    const { guildId, channelId, streamURL } = req.body;
+    const { guildId, channelId, streamURL, qualities } = req.body;
 
     if (!guildId || !channelId || !streamURL) {
         return res.status(400).send('Missing required parameters: guildId, channelId, streamURL');
@@ -61,7 +59,7 @@ app.post('/play', async (req, res) => {
                     await switchStreams(streamURL, metadata);
                 } else {
                     console.log('No active stream, starting new stream...');
-                    const streamUdpConn = await streamer.createStream(generateStreamOptions(metadata));
+                    const streamUdpConn = await streamer.createStream(generateStreamOptions(qualities, metadata));
                     await playVideo(streamURL, metadata, streamUdpConn);
                 }
             } catch (streamError) {
@@ -156,7 +154,7 @@ async function switchStreams(streamURL, metadata) {
     }
 }
 
-function generateStreamOptions(metadata) {
+function generateStreamOptions(qualities, metadata) {
     const videoStream = metadata.streams.find(stream => stream.codec_type === 'video');
     if (!videoStream) {
         throw new Error('No video stream found in the metadata');
@@ -168,24 +166,35 @@ function generateStreamOptions(metadata) {
     const inputHeight = videoStream.height;
     const inputWidth = videoStream.width;
 
-    let defaultBitrateKbps, defaultMaxBitrateKbps;
+    const height = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10) 
+                 : qualities?.height ? qualities.height 
+                 : inputHeight;
+                 
+    const width = process.env.WIDTH ? parseInt(process.env.WIDTH, 10) 
+                : qualities?.width ? qualities.width 
+                : inputWidth;
+                
+    const fps = process.env.FPS ? parseInt(process.env.FPS, 10) 
+              : qualities?.fps ? qualities.fps 
+              : Math.round(inputFps);
 
-    if (inputFps >= 45) { 
-        if (inputHeight >= 1080) {
+    let defaultBitrateKbps, defaultMaxBitrateKbps;
+    if (fps >= 45) { 
+        if (height >= 1080) {
             defaultBitrateKbps = 6000;  
             defaultMaxBitrateKbps = 9000;
-        } else if (inputHeight >= 720) {
+        } else if (height >= 720) {
             defaultBitrateKbps = 4000;  
             defaultMaxBitrateKbps = 6000;
         } else {
             defaultBitrateKbps = 2500;  
             defaultMaxBitrateKbps = 3500;
         }
-    } else if (inputFps >= 15) { 
-        if (inputHeight >= 1080) {
+    } else if (fps >= 15) { 
+        if (height >= 1080) {
             defaultBitrateKbps = 5000;  
             defaultMaxBitrateKbps = 7000;
-        } else if (inputHeight >= 720) {
+        } else if (height >= 720) {
             defaultBitrateKbps = 3000;  
             defaultMaxBitrateKbps = 4500;
         } else {
@@ -193,10 +202,10 @@ function generateStreamOptions(metadata) {
             defaultMaxBitrateKbps = 3000;
         }
     } else {
-        if (inputHeight >= 1080) {
+        if (height >= 1080) {
             defaultBitrateKbps = 4000;  
             defaultMaxBitrateKbps = 6000;
-        } else if (inputHeight >= 720) {
+        } else if (height >= 720) {
             defaultBitrateKbps = 2500;  
             defaultMaxBitrateKbps = 3500;
         } else {
@@ -205,14 +214,20 @@ function generateStreamOptions(metadata) {
         }
     }
 
-    const height = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10) : inputHeight;
-    const width = process.env.WIDTH ? parseInt(process.env.WIDTH, 10) : inputWidth;
-    const fps = process.env.FPS ? parseInt(process.env.FPS, 10) : Math.round(inputFps);
-    const bitrateKbps = process.env.BITRATE_KBPS ? parseInt(process.env.BITRATE_KBPS, 10) : defaultBitrateKbps;
-    const maxBitrateKbps = process.env.MAX_BITRATE_KBPS ? parseInt(process.env.MAX_BITRATE_KBPS, 10) : defaultMaxBitrateKbps;
-    const hardwareAcceleratedDecoding = process.env.HARDWARE_ACCELERATION === 'true';
-    const h26xPreset = process.env.H26X_PRESET ? process.env.H26X_PRESET : "ultrafast";
-    const readAtNativeFps = process.env.READ_AT_NATIVE_FPS ? process.env.READ_AT_NATIVE_FPS : 'true';
+    const bitrateKbps = process.env.BITRATE_KBPS ? parseInt(process.env.BITRATE_KBPS, 10) 
+                        : qualities?.bitrateKbps ? qualities.bitrateKbps 
+                        : defaultBitrateKbps;
+    const maxBitrateKbps = process.env.MAX_BITRATE_KBPS ? parseInt(process.env.MAX_BITRATE_KBPS, 10) 
+                           : qualities?.maxBitrateKbps ? qualities.maxBitrateKbps 
+                           : defaultMaxBitrateKbps;
+    const h26xPreset = process.env.H26X_PRESET 
+                      ? process.env.H26X_PRESET 
+                      : qualities?.h26xPreset 
+                      ? qualities.h26xPreset 
+                      : "superfast";
+
+    const readAtNativeFps = process.env.READ_AT_NATIVE_FPS || qualities?.readAtNativeFps || 'true';
+    const hardwareAcceleratedDecoding = process.env.HARDWARE_ACCELERATION === 'true' || qualities?.hwAccel === 'true';
 
     let videoCodec;
     if (videoStream.codec_name === 'vp8' || videoStream.codec_name === 'vp9') {
