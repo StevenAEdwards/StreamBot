@@ -3,7 +3,7 @@ const { Client, StageChannel } = require('discord.js-selfbot-v13');
 const { command, streamLivestreamVideo, getInputMetadata, inputHasAudio, Streamer } = require('@dank074/discord-video-stream');
 //API
 const app = express();
-app.use(express.json()); 
+app.use(express.json());
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`API server is listening on port ${port}`);
@@ -52,30 +52,34 @@ app.post('/play', async (req, res) => {
             return res.status(500).send('Failed to fetch stream metadata.');
         }
 
-        (async () => {
-            try {
-                if (currentVoiceState && currentVoiceState.streaming) {
-                    console.log('Already streaming, switching streams...');
-                    await switchStreams(streamURL, metadata);
-                } else {
-                    console.log('No active stream, starting new stream...');
-                    const streamUdpConn = await streamer.createStream(generateStreamOptions(qualities, metadata));
-                    await playVideo(streamURL, metadata, streamUdpConn);
-                }
-            } catch (streamError) {
-                console.error('Error while streaming:', streamError);
-            }
-        })();
+        try {
+            await killAllFfmpegProcesses();
 
-        return res.status(200).send('Streaming started successfully.');
+            if (currentVoiceState && currentVoiceState.streaming) {
+                console.log('Already streaming, switching streams...');
+                switchStreams(streamURL, metadata);
+            } else {
+                console.log('No active stream, starting new stream...');
+                const streamUdpConn = await streamer.createStream(generateStreamOptions(qualities, metadata));
+                playVideo(streamURL, metadata, streamUdpConn);
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 4000));
+
+            return res.status(200).send('Streaming started successfully.');
+        } catch (streamError) {
+            console.error('Error while streaming:', streamError);
+            return res.status(500).send('Failed to start streaming.');
+        }
     } catch (error) {
-        console.error('Error while streaming:', error);
-        return res.status(500).send('Failed to start streaming.');
+        console.error('Unexpected error while processing the /play request:', error);
+        return res.status(500).send('Failed to process the /play request.');
     }
 });
 
 app.post('/disconnect', async (req, res) => {
     try {
+        await killAllFfmpegProcesses();
         await disconnectFromVoice();
         return res.status(200).send('Successfully disconnected and stopped the stream.');
     } catch (error) {
@@ -101,6 +105,20 @@ async function disconnectFromVoice() {
         console.error('Error during disconnect:', error);
         throw new Error('Failed to disconnect');
     }
+}
+
+async function killAllFfmpegProcesses() {
+    return new Promise((resolve, reject) => {
+        exec('pkill -f ffmpeg', (err, stdout, stderr) => {
+            if (err && err.code !== 1) {
+                console.error(`Failed to kill FFmpeg processes: ${stderr}`);
+                reject(err);
+            } else {
+                console.log('All FFmpeg processes terminated successfully.');
+                resolve();
+            }
+        });
+    });
 }
 
 async function playVideo(video, metadata, udpConn) {
@@ -162,69 +180,69 @@ function generateStreamOptions(qualities, metadata) {
 
     const frameRateParts = videoStream.avg_frame_rate.split('/');
     const inputFps = frameRateParts.length === 2 ? parseInt(frameRateParts[0], 10) / parseInt(frameRateParts[1], 10) : parseFloat(videoStream.avg_frame_rate);
-    
+
     const inputHeight = videoStream.height;
     const inputWidth = videoStream.width;
 
-    const height = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10) 
-                 : qualities?.height ? qualities.height 
-                 : inputHeight;
-                 
-    const width = process.env.WIDTH ? parseInt(process.env.WIDTH, 10) 
-                : qualities?.width ? qualities.width 
-                : inputWidth;
-                
-    const fps = process.env.FPS ? parseInt(process.env.FPS, 10) 
-              : qualities?.fps ? qualities.fps 
-              : Math.round(inputFps);
+    const height = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10)
+        : qualities?.height ? qualities.height
+            : inputHeight;
+
+    const width = process.env.WIDTH ? parseInt(process.env.WIDTH, 10)
+        : qualities?.width ? qualities.width
+            : inputWidth;
+
+    const fps = process.env.FPS ? parseInt(process.env.FPS, 10)
+        : qualities?.fps ? qualities.fps
+            : Math.round(inputFps);
 
     let defaultBitrateKbps, defaultMaxBitrateKbps;
-    if (fps >= 45) { 
+    if (fps >= 45) {
         if (height >= 1080) {
-            defaultBitrateKbps = 6000;  
+            defaultBitrateKbps = 6000;
             defaultMaxBitrateKbps = 9000;
         } else if (height >= 720) {
-            defaultBitrateKbps = 4000;  
+            defaultBitrateKbps = 4000;
             defaultMaxBitrateKbps = 6000;
         } else {
-            defaultBitrateKbps = 2500;  
+            defaultBitrateKbps = 2500;
             defaultMaxBitrateKbps = 3500;
         }
-    } else if (fps >= 15) { 
+    } else if (fps >= 15) {
         if (height >= 1080) {
-            defaultBitrateKbps = 5000;  
+            defaultBitrateKbps = 5000;
             defaultMaxBitrateKbps = 7000;
         } else if (height >= 720) {
-            defaultBitrateKbps = 3000;  
+            defaultBitrateKbps = 3000;
             defaultMaxBitrateKbps = 4500;
         } else {
-            defaultBitrateKbps = 2000;  
+            defaultBitrateKbps = 2000;
             defaultMaxBitrateKbps = 3000;
         }
     } else {
         if (height >= 1080) {
-            defaultBitrateKbps = 4000;  
+            defaultBitrateKbps = 4000;
             defaultMaxBitrateKbps = 6000;
         } else if (height >= 720) {
-            defaultBitrateKbps = 2500;  
+            defaultBitrateKbps = 2500;
             defaultMaxBitrateKbps = 3500;
         } else {
-            defaultBitrateKbps = 1500;   
+            defaultBitrateKbps = 1500;
             defaultMaxBitrateKbps = 2000;
         }
     }
 
-    const bitrateKbps = process.env.BITRATE_KBPS ? parseInt(process.env.BITRATE_KBPS, 10) 
-                        : qualities?.bitrateKbps ? qualities.bitrateKbps 
-                        : defaultBitrateKbps;
-    const maxBitrateKbps = process.env.MAX_BITRATE_KBPS ? parseInt(process.env.MAX_BITRATE_KBPS, 10) 
-                           : qualities?.maxBitrateKbps ? qualities.maxBitrateKbps 
-                           : defaultMaxBitrateKbps;
-    const h26xPreset = process.env.H26X_PRESET 
-                      ? process.env.H26X_PRESET 
-                      : qualities?.h26xPreset 
-                      ? qualities.h26xPreset 
-                      : "superfast";
+    const bitrateKbps = process.env.BITRATE_KBPS ? parseInt(process.env.BITRATE_KBPS, 10)
+        : qualities?.bitrateKbps ? qualities.bitrateKbps
+            : defaultBitrateKbps;
+    const maxBitrateKbps = process.env.MAX_BITRATE_KBPS ? parseInt(process.env.MAX_BITRATE_KBPS, 10)
+        : qualities?.maxBitrateKbps ? qualities.maxBitrateKbps
+            : defaultMaxBitrateKbps;
+    const h26xPreset = process.env.H26X_PRESET
+        ? process.env.H26X_PRESET
+        : qualities?.h26xPreset
+            ? qualities.h26xPreset
+            : "superfast";
 
     const readAtNativeFps = process.env.READ_AT_NATIVE_FPS || qualities?.readAtNativeFps || 'true';
     const hardwareAcceleratedDecoding = process.env.HARDWARE_ACCELERATION === 'true' || qualities?.hwAccel === 'true';
