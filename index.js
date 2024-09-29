@@ -1,10 +1,14 @@
 const express = require('express');
 const { Client, StageChannel } = require('discord.js-selfbot-v13');
 const { command, streamLivestreamVideo, getInputMetadata, inputHasAudio, Streamer } = require('@dank074/discord-video-stream');
+const { exec } = require('child_process');
 //API
 const app = express();
 app.use(express.json());
+
 const port = process.env.PORT || 3000;
+let isPlayTimeoutActive = false;
+
 app.listen(port, () => {
     console.log(`API server is listening on port ${port}`);
 });
@@ -22,7 +26,17 @@ app.post('/play', async (req, res) => {
         return res.status(400).send('Missing required parameters: guildId, channelId, streamURL');
     }
 
+    if (isPlayTimeoutActive) {
+        console.log('Play command is currently in cooldown. Ignoring request.');
+        return res.status(429).send('Play command is in cooldown. Please try again in a few seconds.');
+    }
+
     try {
+        isPlayTimeoutActive = true;
+        setTimeout(() => {
+            isPlayTimeoutActive = false;
+        }, 5000);
+
         const guild = streamer.client.guilds.cache.get(guildId);
         if (!guild) return res.status(404).send('Guild not found.');
 
@@ -52,19 +66,28 @@ app.post('/play', async (req, res) => {
             return res.status(500).send('Failed to fetch stream metadata.');
         }
 
+        let streamOptions;
+        try {
+            streamOptions = await generateStreamOptions(qualities, metadata)
+        } catch (e) {
+            console.log('Error creating stream option:', e);
+            return res.status(500).send('Failed to create stream options.');
+        }
+
         try {
             await killAllFfmpegProcesses();
 
+            //To Do: refactor for smarter handling this is kinda dumb
             if (currentVoiceState && currentVoiceState.streaming) {
                 console.log('Already streaming, switching streams...');
-                switchStreams(streamURL, metadata);
+                switchStreams(streamURL, streamOptions, metadata);
             } else {
                 console.log('No active stream, starting new stream...');
-                const streamUdpConn = await streamer.createStream(generateStreamOptions(qualities, metadata));
+                const streamUdpConn = await streamer.createStream(streamOptions);
                 playVideo(streamURL, metadata, streamUdpConn);
             }
 
-            await new Promise(resolve => setTimeout(resolve, 4000));
+            await new Promise(resolve => setTimeout(resolve, 2000));
 
             return res.status(200).send('Streaming started successfully.');
         } catch (streamError) {
@@ -140,7 +163,7 @@ async function playVideo(video, metadata, udpConn) {
     command?.kill("SIGINT");
 }
 
-async function switchStreams(streamURL, metadata) {
+async function switchStreams(streamURL, streamOptions, metadata) {
     try {
 
         console.log("Stopping the current stream...");
@@ -150,7 +173,7 @@ async function switchStreams(streamURL, metadata) {
             stream.setSpeaking(false);
             stream.setVideoStatus(false);
             streamer.stopStream();
-            command?.kill('SIGINT');
+            command?.kill('SIGINT'); //To Do: remove and test 99% sure this can be deleted
 
             await new Promise((resolve) => setTimeout(resolve, 1000));
         } else {
@@ -158,8 +181,7 @@ async function switchStreams(streamURL, metadata) {
         }
 
         console.log("Starting new stream...");
-        const streamUdpConn = await streamer.createStream(generateStreamOptions(metadata));
-
+        const streamUdpConn = await streamer.createStream(streamOptions);
         streamUdpConn.mediaConnection.setSpeaking(true);
         streamUdpConn.mediaConnection.setVideoStatus(true);
 
