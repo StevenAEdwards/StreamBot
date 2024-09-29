@@ -17,65 +17,69 @@ streamer.client.on('ready', () => {
 
 app.post('/play', async (req, res) => {
     const { guildId, channelId, streamURL, qualities } = req.body;
-
+  
     if (!guildId || !channelId || !streamURL) {
-        return res.status(400).send('Missing required parameters: guildId, channelId, streamURL');
+      return res.status(400).send('Missing required parameters: guildId, channelId, streamURL');
     }
-
+  
     try {
-        const guild = streamer.client.guilds.cache.get(guildId);
-        if (!guild) return res.status(404).send('Guild not found.');
-
-        const channel = guild.channels.cache.get(channelId);
-        if (!channel || channel.type !== 'GUILD_VOICE') {
-            return res.status(404).send('Voice channel not found or invalid.');
+      const guild = streamer.client.guilds.cache.get(guildId);
+      if (!guild) return res.status(404).send('Guild not found.');
+  
+      const channel = guild.channels.cache.get(channelId);
+      if (!channel || channel.type !== 'GUILD_VOICE') {
+        return res.status(404).send('Voice channel not found or invalid.');
+      }
+  
+      const currentVoiceState = streamer.client.user.voice;
+  
+      if (currentVoiceState && currentVoiceState.channelId === channelId) {
+        console.log(`Already connected to voice channel ${guildId}/${channelId}`);
+      } else {
+        console.log(`Joining voice channel ${guildId}/${channelId}`);
+        await streamer.joinVoice(guildId, channelId);
+  
+        if (channel instanceof StageChannel) {
+          await streamer.client.user.voice.setSuppressed(false);
         }
-
-        const currentVoiceState = streamer.client.user.voice;
-
-        if (currentVoiceState && currentVoiceState.channelId === channelId) {
-            console.log(`Already connected to voice channel ${guildId}/${channelId}`);
+      }
+  
+      let metadata;
+      try {
+        metadata = await getInputMetadata(streamURL);
+      } catch (e) {
+        console.log('Error fetching metadata:', e);
+        return res.status(500).send('Failed to fetch stream metadata.');
+      }
+  
+      try {
+        await killAllFfmpegProcesses();
+  
+        if (currentVoiceState && currentVoiceState.streaming) {
+          console.log('Already streaming, switching streams...');
+          switchStreams(streamURL, metadata);
         } else {
-            console.log(`Joining voice channel ${guildId}/${channelId}`);
-            await streamer.joinVoice(guildId, channelId);
-
-            if (channel instanceof StageChannel) {
-                await streamer.client.user.voice.setSuppressed(false);
-            }
+          console.log('No active stream, starting new stream...');
+          const streamUdpConn = await streamer.createStream(generateStreamOptions(qualities, metadata));
+          playVideo(streamURL, metadata, streamUdpConn);
         }
-
-        let metadata;
-        try {
-            metadata = await getInputMetadata(streamURL);
-        } catch (e) {
-            console.log('Error fetching metadata:', e);
-            return res.status(500).send('Failed to fetch stream metadata.');
-        }
-
-        (async () => {
-            try {
-                if (currentVoiceState && currentVoiceState.streaming) {
-                    console.log('Already streaming, switching streams...');
-                    await switchStreams(streamURL, metadata);
-                } else {
-                    console.log('No active stream, starting new stream...');
-                    const streamUdpConn = await streamer.createStream(generateStreamOptions(qualities, metadata));
-                    await playVideo(streamURL, metadata, streamUdpConn);
-                }
-            } catch (streamError) {
-                console.error('Error while streaming:', streamError);
-            }
-        })();
-
+  
+        await new Promise(resolve => setTimeout(resolve, 4000));
+  
         return res.status(200).send('Streaming started successfully.');
-    } catch (error) {
-        console.error('Error while streaming:', error);
+      } catch (streamError) {
+        console.error('Error while streaming:', streamError);
         return res.status(500).send('Failed to start streaming.');
+      }
+    } catch (error) {  
+      console.error('Unexpected error while processing the /play request:', error);
+      return res.status(500).send('Failed to process the /play request.');
     }
-});
+  });
 
 app.post('/disconnect', async (req, res) => {
     try {
+        await killAllFfmpegProcesses();
         await disconnectFromVoice();
         return res.status(200).send('Successfully disconnected and stopped the stream.');
     } catch (error) {
@@ -101,6 +105,20 @@ async function disconnectFromVoice() {
         console.error('Error during disconnect:', error);
         throw new Error('Failed to disconnect');
     }
+}
+
+async function killAllFfmpegProcesses() {
+    return new Promise((resolve, reject) => {
+        exec('pkill -f ffmpeg', (err, stdout, stderr) => {
+            if (err && err.code !== 1) {
+                console.error(`Failed to kill FFmpeg processes: ${stderr}`);
+                reject(err);
+            } else {
+                console.log('All FFmpeg processes terminated successfully.');
+                resolve();
+            }
+        });
+    });
 }
 
 async function playVideo(video, metadata, udpConn) {
