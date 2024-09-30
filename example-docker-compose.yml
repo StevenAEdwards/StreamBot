@@ -3,7 +3,7 @@ services:
     image: stevenedwards/streambot:latest
     container_name: streambot
     ports:
-      - "3123:3000"
+      - "3123:3123"
     stdin_open: true  
     tty: true        
     devices:
