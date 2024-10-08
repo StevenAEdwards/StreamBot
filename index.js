@@ -2,6 +2,8 @@ const express = require('express');
 const { Client, StageChannel } = require('discord.js-selfbot-v13');
 const { command, streamLivestreamVideo, getInputMetadata, inputHasAudio, Streamer } = require('@dank074/discord-video-stream');
 const { exec } = require('child_process');
+const STUTTER_FPS_OFFSET = 2; //temp fix that works really well until I figure out a better way to handle skipping frames
+
 //API
 const app = express();
 app.use(express.json());
@@ -201,7 +203,7 @@ function generateStreamOptions(qualities, metadata) {
     }
 
     const frameRateParts = videoStream.avg_frame_rate.split('/');
-    const inputFps = frameRateParts.length === 2 ? parseInt(frameRateParts[0], 10) / parseInt(frameRateParts[1], 10) : parseFloat(videoStream.avg_frame_rate);
+    const inputFps = (frameRateParts.length === 2 ? parseInt(frameRateParts[0], 10) / parseInt(frameRateParts[1], 10) : parseFloat(videoStream.avg_frame_rate)) - STUTTER_FPS_OFFSET;
 
     const inputHeight = videoStream.height;
     const inputWidth = videoStream.width;
