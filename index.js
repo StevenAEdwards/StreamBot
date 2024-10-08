@@ -203,7 +203,8 @@ function generateStreamOptions(qualities, metadata) {
     }
 
     const frameRateParts = videoStream.avg_frame_rate.split('/');
-    const inputFps = (frameRateParts.length === 2 ? parseInt(frameRateParts[0], 10) / parseInt(frameRateParts[1], 10) : parseFloat(videoStream.avg_frame_rate)) - STUTTER_FPS_OFFSET;
+    const parsedFps = (frameRateParts.length === 2 ? parseInt(frameRateParts[0], 10) / parseInt(frameRateParts[1], 10) : parseFloat(videoStream.avg_frame_rate)) - STUTTER_FPS_OFFSET;
+    const inputFps = parsedFps > process.env.MAX_FPS ? process.env.MAX_FPS : parsedFps;
 
     const inputHeight = videoStream.height;
     const inputWidth = videoStream.width;
