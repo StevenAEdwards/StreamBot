@@ -269,7 +269,7 @@ function generateStreamOptions(qualities, metadata) {
             ? qualities.h26xPreset
             : "superfast";
 
-    const readAtNativeFps = process.env.READ_AT_NATIVE_FPS || qualities?.readAtNativeFps || 'true';
+    const readAtNativeFps = process.env.READ_AT_NATIVE_FPS || qualities?.readAtNativeFps || 'false';
     const hardwareAcceleratedDecoding = process.env.HARDWARE_ACCELERATION === 'true' || qualities?.hwAccel === 'true';
 
     let videoCodec;
