@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -10,8 +11,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@dank074/discord-video-stream": "^3.2.0",
-    "discord.js-selfbot-v13": "^3.4.0",
-    "express": "^4.21.0"
+    "@dank074/discord-video-stream": "4.0.0",
+    "discord.js-selfbot-v13": "^3.2.2",
+    "express": "^4.21.0",
+    "p-cancelable": "^4.0.1"
   }
 }

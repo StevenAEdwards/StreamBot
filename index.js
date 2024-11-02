@@ -1,25 +1,35 @@
-const express = require('express');
-const { Client, StageChannel } = require('discord.js-selfbot-v13');
-const { command, streamLivestreamVideo, getInputMetadata, inputHasAudio, Streamer } = require('@dank074/discord-video-stream');
-const { exec } = require('child_process');
-const STUTTER_FPS_OFFSET = 2; //temp fix that works really well until I figure out a better way to handle skipping frames
+import express from 'express';
+import { Client, StageChannel } from 'discord.js-selfbot-v13';
+import { streamLivestreamVideo, getInputMetadata, inputHasAudio, Streamer } from '@dank074/discord-video-stream';
+import PCancelable from "p-cancelable";
 
 //API
 const app = express();
 app.use(express.json());
 
 const port = process.env.PORT || 3123;
-let isPlayTimeoutActive = false;
 
 app.listen(port, () => {
     console.log(`API server is listening on port ${port}`);
 });
+
 // Discord Login
 const streamer = new Streamer(new Client());
 streamer.client.login(process.env.DISCORD_TOKEN);
 streamer.client.on('ready', () => {
     console.log(`--- ${streamer.client.user.tag} is ready ---`);
 });
+
+let isPlayTimeoutActive = false;
+let command = new PCancelable((resolve, reject, onCancel) => {
+    onCancel(() => {
+        console.log('Promise was canceled');
+    });
+    setTimeout(() => {
+        resolve('Done');
+    }, 1000);
+});
+
 
 app.post('/play', async (req, res) => {
     const { guildId, channelId, streamURL, qualities } = req.body;
@@ -33,79 +43,71 @@ app.post('/play', async (req, res) => {
         return res.status(429).send('Play command is in cooldown. Please try again in a few seconds.');
     }
 
+    isPlayTimeoutActive = true;
+    setTimeout(() => {
+        isPlayTimeoutActive = false;
+    }, 5000);
+
+    const guild = streamer.client.guilds.cache.get(guildId);
+    if (!guild) return res.status(404).send('Guild not found.');
+
+    const channel = guild.channels.cache.get(channelId);
+    if (!channel || channel.type !== 'GUILD_VOICE') {
+        return res.status(404).send('Voice channel not found or invalid.');
+    }
+
+    let streamOptions, includeAudio;
     try {
-        isPlayTimeoutActive = true;
-        setTimeout(() => {
-            isPlayTimeoutActive = false;
-        }, 5000);
+        let metadata = await getInputMetadata(streamURL);
+        let videoStream = metadata.streams.find(stream => stream.codec_type === 'video');
 
-        const guild = streamer.client.guilds.cache.get(guildId);
-        if (!guild) return res.status(404).send('Guild not found.');
-
-        const channel = guild.channels.cache.get(channelId);
-        if (!channel || channel.type !== 'GUILD_VOICE') {
-            return res.status(404).send('Voice channel not found or invalid.');
+        if (!videoStream) {
+            throw new Error('No video stream found in the metadata');
         }
 
+        includeAudio = inputHasAudio(metadata);
+        streamOptions = generateStreamOptions(qualities, videoStream)
+    } catch (e) {
+        console.log(`[${new Date().toISOString()}] Error encountered while fetching metadata or generating stream options:`, e);
+        return res.status(500).send('Error encountered while fetching metadata or generating stream options');
+    }
+
+    try {
         const currentVoiceState = streamer.client.user.voice;
 
-        if (currentVoiceState && currentVoiceState.channelId === channelId) {
-            console.log(`Already connected to voice channel ${guildId}/${channelId}`);
-        } else {
+        if (currentVoiceState && currentVoiceState.channelId !== channelId) {
             console.log(`Joining voice channel ${guildId}/${channelId}`);
             await streamer.joinVoice(guildId, channelId);
-
-            if (channel instanceof StageChannel) {
-                await streamer.client.user.voice.setSuppressed(false);
-            }
         }
 
-        let metadata;
-        try {
-            metadata = await getInputMetadata(streamURL);
-        } catch (e) {
-            console.log('Error fetching metadata:', e);
-            return res.status(500).send('Failed to fetch stream metadata.');
+        if (!streamer.voiceConnection){
+            return res.status(409).send('Desync: Please kick detached Stream Bot instance and try again');
         }
 
-        let streamOptions;
-        try {
-            streamOptions = await generateStreamOptions(qualities, metadata)
-        } catch (e) {
-            console.log('Error creating stream option:', e);
-            return res.status(500).send('Failed to create stream options.');
+        //end current stream
+        if (currentVoiceState && currentVoiceState.streaming) {
+            await cancelExistingCommand(command);
+            streamer.stopStream();
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
-        try {
-            await killAllFfmpegProcesses();
+        const streamUdpConn = await streamer.createStream(streamOptions);
+        startStream(streamURL, streamUdpConn, includeAudio);
 
-            //To Do: refactor for smarter handling this is kinda dumb
-            if (currentVoiceState && currentVoiceState.streaming) {
-                console.log('Already streaming, switching streams...');
-                switchStreams(streamURL, streamOptions, metadata);
-            } else {
-                console.log('No active stream, starting new stream...');
-                const streamUdpConn = await streamer.createStream(streamOptions);
-                playVideo(streamURL, metadata, streamUdpConn);
-            }
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            return res.status(200).send('Streaming started successfully.');
-        } catch (streamError) {
-            console.error('Error while streaming:', streamError);
-            return res.status(500).send('Failed to start streaming.');
-        }
-    } catch (error) {
-        console.error('Unexpected error while processing the /play request:', error);
-        return res.status(500).send('Failed to process the /play request.');
+        return res.status(200).send('Streaming started successfully.');
+    } catch (streamError) {
+        console.error('Error while streaming:', streamError);
+        return res.status(500).send('Failed to start streaming.');
     }
 });
 
 app.post('/disconnect', async (req, res) => {
     try {
-        await killAllFfmpegProcesses();
-        await disconnectFromVoice();
+        command?.cancel();
+        streamer.stopStream();
+        await streamer.leaveVoice();
         return res.status(200).send('Successfully disconnected and stopped the stream.');
     } catch (error) {
         console.error('Error during disconnect:', error);
@@ -113,96 +115,41 @@ app.post('/disconnect', async (req, res) => {
     }
 });
 
-async function disconnectFromVoice() {
-    try {
-        if (streamer.voiceConnection?.streamConnection) {
-            console.log("Stopping the current stream...");
-            const stream = streamer.voiceConnection.streamConnection;
-            stream.setSpeaking(false);
-            stream.setVideoStatus(false);
-            streamer.stopStream();
-            command?.kill('SIGINT');
-        }
-        console.log("Leaving the voice channel...");
-        await streamer.leaveVoice();
-        console.log("Successfully disconnected from the voice channel.");
-    } catch (error) {
-        console.error('Error during disconnect:', error);
-        throw new Error('Failed to disconnect');
-    }
-}
-
-async function killAllFfmpegProcesses() {
+function cancelExistingCommand(command) {
     return new Promise((resolve, reject) => {
-        exec('pkill -f ffmpeg', (err, stdout, stderr) => {
-            if (err && err.code !== 1) {
-                console.error(`Failed to kill FFmpeg processes: ${stderr}`);
-                reject(err);
-            } else {
-                console.log('All FFmpeg processes terminated successfully.');
-                resolve();
-            }
-        });
+        try {
+            command.cancel();
+            resolve();
+        } catch (error) {
+            reject(error);
+        }
     });
 }
 
-async function playVideo(video, metadata, udpConn) {
+async function startStream(streamUrl, udpConn, includeAudio) {
 
-    let includeAudio = inputHasAudio(metadata);
-    console.log('Started playing video');
+    console.log(`[${new Date().toISOString()}] Starting video stream - Stream URL: ${streamUrl} - Stream Options: ${JSON.stringify(udpConn._mediaConnection._streamOptions)}`);
 
     udpConn.mediaConnection.setSpeaking(true);
     udpConn.mediaConnection.setVideoStatus(true);
 
     try {
-        const res = await streamLivestreamVideo(video, udpConn, includeAudio);
+        command = streamLivestreamVideo(streamUrl, udpConn, includeAudio);
+        const res = await command;
+        console.log("Finished playing video " + res);
     } catch (e) {
-        console.log('Error while playing video:', e);
+        if (command.isCanceled) {
+            console.log('Stream was cancelled');
+        } else {
+            console.log(e);
+        }
     } finally {
         udpConn.mediaConnection.setSpeaking(false);
         udpConn.mediaConnection.setVideoStatus(false);
     }
-    command?.kill("SIGINT");
 }
 
-async function switchStreams(streamURL, streamOptions, metadata) {
-    try {
-
-        console.log("Stopping the current stream...");
-
-        if (streamer.voiceConnection.streamConnection) {
-            const stream = streamer.voiceConnection.streamConnection;
-            stream.setSpeaking(false);
-            stream.setVideoStatus(false);
-            streamer.stopStream();
-            command?.kill('SIGINT'); //To Do: remove and test 99% sure this can be deleted
-
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-        } else {
-            console.log("No active stream to stop.");
-        }
-
-        console.log("Starting new stream...");
-        const streamUdpConn = await streamer.createStream(streamOptions);
-        streamUdpConn.mediaConnection.setSpeaking(true);
-        streamUdpConn.mediaConnection.setVideoStatus(true);
-
-        await playVideo(streamURL, metadata, streamUdpConn);
-
-        console.log("Stream switched successfully.");
-    } catch (error) {
-        console.error('Error while switching streams:', error);
-        throw new Error('Failed to switch streams');
-    }
-}
-
-function generateStreamOptions(qualities, metadata) {
-    const videoStream = metadata.streams.find(stream => stream.codec_type === 'video');
-    if (!videoStream) {
-        throw new Error('No video stream found in the metadata');
-    }
-
-
+function generateStreamOptions(qualities, videoStream) {
     //WIDTH and HEIGHT
     const inputHeight = videoStream.height;
     const inputWidth = videoStream.width;
@@ -234,7 +181,7 @@ function generateStreamOptions(qualities, metadata) {
         : initialFps;
 
     //BITRATE
-    const generatedBitrate = generateProperBitrate(height, width, fps);
+    const generatedBitrate = generateBitrateFromResolutionAndFramerate(height, width, fps);
     const { bitrateKbps: generatedBitrateKbps, maxBitrateKbps: generatedMaxBitrateKbps } = generatedBitrate;
 
     const bitrateKbps = process.env.BITRATE_KBPS
@@ -251,7 +198,7 @@ function generateStreamOptions(qualities, metadata) {
 
     // hw accel
     const hardwareAcceleratedDecoding =
-        process.env.HARDWARE_ACCELERATION !== 'false' && qualities?.hwAccel !== 'false';
+        process.env.HARDWARE_ACCELERATION !== 'false' && qualities?.hardwareAcceleratedDecoding !== 'false';
 
     // video codec
     let videoCodec;
@@ -261,28 +208,27 @@ function generateStreamOptions(qualities, metadata) {
         videoCodec = 'H264';
     }
 
-    // native fps
-    const readAtNativeFps =
-    process.env.READ_AT_NATIVE_FPS === 'true' || qualities?.readAtNativeFps === 'true';
+    // native fps (soon deprecated?)
+    const readAtNativeFps = process.env.READ_AT_NATIVE_FPS === 'true' || qualities?.readAtNativeFps === 'true';
     
     // rtcp sender report
-    // const rtcpSenderReportEnabled = process.env.RTCP_SENDER === 'true' || qualities?.rtcpSenderReportEnabled === 'true';
+    const rtcpSenderReportEnabled = process.env.RTCP_SENDER === 'true' || qualities?.rtcpSenderReportEnabled === 'true';
 
     // h26x preset 
-    // const h26xPreset = process.env.H26X_PRESET
-    //     ? process.env.H26X_PRESET
-    //     : qualities?.h26xPreset
-    //         ? qualities.h26xPreset
-    //         : "superfast";
+    const h26xPreset = process.env.H26X_PRESET
+        ? process.env.H26X_PRESET
+        : qualities?.h26xPreset
+            ? qualities.h26xPreset
+            : "superfast";
 
     // minimize latency 
-    // const minimizeLatency = process.env.MINIMIZE_LATENCY === 'false' || qualities?.minimizeLatency === 'false';
+    const minimizeLatency = process.env.MINIMIZE_LATENCY !== 'false' && qualities?.minimizeLatency !== 'false';
 
     // forceChacha20Encryption
-    // const forceChacha20Encryption = process.env.FORCE_CHACHA === 'true' || qualities?.forceChacha20Encryption === 'true';
+    const forceChacha20Encryption = process.env.FORCE_CHACHA === 'true' || qualities?.forceChacha20Encryption === 'true';
 
     // Prepare final options object
-    const finalOptions = {
+    return {
         width,
         height,
         fps,
@@ -291,36 +237,32 @@ function generateStreamOptions(qualities, metadata) {
         hardwareAcceleratedDecoding,
         videoCodec,
         readAtNativeFps,
-        // rtcpSenderReportEnabled,
-        // h26xPreset,
-        // minimizeLatency,
-        // forceChacha20Encryption
+        rtcpSenderReportEnabled,
+        h26xPreset,
+        minimizeLatency,
+        forceChacha20Encryption
     };
-
-    console.log("Started stream with options:", finalOptions);
-
-    return finalOptions;
 }
 
-function generateProperBitrate(height, width, framerate) {
+function generateBitrateFromResolutionAndFramerate(height, width, framerate) {
     let bitrateKbps;
     let maxBitrateKbps;
 
     if (height >= 2160) {
-        bitrateKbps = framerate >= 50 ? 16000 : 14000;
-        maxBitrateKbps = framerate >= 50 ? 20000 : 18000;
+        bitrateKbps = framerate >= 50 ? 20000 : 18000;
+        maxBitrateKbps = framerate >= 50 ? 25000 : 23000;
     } else if (height >= 1440) {
-        bitrateKbps = framerate >= 50 ? 10000 : 9000;
-        maxBitrateKbps = framerate >= 50 ? 12000 : 11000;
+        bitrateKbps = framerate >= 50 ? 14000 : 12000;
+        maxBitrateKbps = framerate >= 50 ? 16000 : 14000;
     } else if (height >= 1080) {
-        bitrateKbps = framerate >= 50 ? 7000 : 6000;
-        maxBitrateKbps = framerate >= 50 ? 9000 : 8000;
+        bitrateKbps = framerate >= 50 ? 10000 : 8000;
+        maxBitrateKbps = framerate >= 50 ? 12000 : 10000;
     } else if (height >= 720) {
-        bitrateKbps = framerate >= 50 ? 4500 : 3500;
-        maxBitrateKbps = framerate >= 50 ? 6000 : 5000;
+        bitrateKbps = framerate >= 50 ? 7000 : 5000;
+        maxBitrateKbps = framerate >= 50 ? 9000 : 7000;
     } else {
-        bitrateKbps = 2500;
-        maxBitrateKbps = 3000;
+        bitrateKbps = 6000;
+        maxBitrateKbps = 8000;
     }
 
     if (framerate < 30) {
