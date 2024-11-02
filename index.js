@@ -10,14 +10,14 @@ app.use(express.json());
 const port = process.env.PORT || 3123;
 
 app.listen(port, () => {
-    console.log(`API server is listening on port ${port}`);
+    logMessage("API server is listening", `Port: ${port}`);
 });
 
 // Discord Login
 const streamer = new Streamer(new Client());
 streamer.client.login(process.env.DISCORD_TOKEN);
 streamer.client.on('ready', () => {
-    console.log(`--- ${streamer.client.user.tag} is ready ---`);
+    logMessage("Bot is ready", `Bot Tag: ${streamer.client.user.tag}`);
 });
 
 let command = new PCancelable((resolve, reject, onCancel) => {
@@ -35,24 +35,23 @@ let isPlayTimeoutActive = false;
 app.post('/play', async (req, res) => {
     const { guildId, channelId, stream, qualities, user } = req.body;
 
-    console.log(`
-        [${new Date().toISOString()}] Incoming request:
+    logMessage("Endpoint: /play", `
         Server / Channel ID: ${guildId} / ${channelId}
         User: ${user.name} (ID: ${user.id})
         Stream Name: ${stream.name}
         Stream URL: ${stream.url}
-        Qualities: ${JSON.stringify(qualities, null, 2)}`
-    );
+        Qualities: ${JSON.stringify(qualities, null, 2)}
+    `);
 
     if (!guildId || !channelId || !stream.url) {
         const errorMessage = 'Missing required parameters: guildId, channelId, streamUrl';
-        console.log(`[${new Date().toISOString()}] Response: 400 Bad Request - ${errorMessage}`);
+        logMessage("Response: 400 Bad Request", errorMessage);
         return res.status(400).send(errorMessage);
     }
 
     if (isPlayTimeoutActive) {
         const message = 'Play command is in cooldown. Please try again in a few seconds.';
-        console.log(`[${new Date().toISOString()}] Response: 429 Too Many Requests - Play command is currently in cooldown. Ignoring request.`);
+        logMessage("Response: 429 Too Many Requests", message);
         return res.status(429).send(message);
     }
 
@@ -68,7 +67,7 @@ app.post('/play', async (req, res) => {
         const message = !guild
             ? 'Guild not found.'
             : 'Voice channel not found or invalid.';
-        console.log(`[${new Date().toISOString()}] Response: 404 Not Found - ${message}`);
+        logMessage("Response: 404 Not Found", message);
         return res.status(404).send(message);
     }
 
@@ -83,7 +82,7 @@ app.post('/play', async (req, res) => {
         includeAudio = inputHasAudio(metadata);
     } catch (e) {
         const message = 'Error encountered while fetching metadata or generating stream options';
-        console.log(`[${new Date().toISOString()}] Response: 500 Internal Server Error - ${message} - Error details:`, e);
+        logMessage("Response: 500 Internal Server Error", `${message}\nError details: ${e}`);
         return res.status(500).send(message);
     }
 
@@ -91,26 +90,27 @@ app.post('/play', async (req, res) => {
         const currentVoiceState = streamer.client.user.voice;
 
         if (currentVoiceState && currentVoiceState.channelId !== channelId) {
-            console.log(`[${new Date().toISOString()}] Action: Joining voice channel
-            Server ID: ${guildId}
-            Target Channel ID: ${channelId}`);
+            logMessage("Action: Joining voice channel", `
+                Server ID: ${guildId}
+                Target Channel ID: ${channelId}
+            `);
             await streamer.joinVoice(guildId, channelId);
         }
 
         if (!streamer.voiceConnection) {
             const botUserId = streamer.client.user.id;
             const message = `Desync: Please kick detached Stream Bot instance with User ID ${botUserId} and try again.`;
-            console.log(`[${new Date().toISOString()}] Response: 409 Conflict - ${message}`);
+            logMessage("Response: 409 Conflict", message);
             return res.status(409).json({ message, botUserId });
         }
 
         if (currentVoiceState && currentVoiceState.streaming) {
-            endExistingStream(streamer, command)
+            endExistingStream(streamer, command);
         }
 
         const streamUdpConn = await streamer.createStream(streamOptions);
 
-        console.log(`[${new Date().toISOString()}] Starting video stream:
+        logMessage("Starting video stream", `
             Stream URL: ${stream.url}
             Stream Options: ${JSON.stringify(streamUdpConn._mediaConnection._streamOptions, null, 2)}
         `);
@@ -120,7 +120,7 @@ app.post('/play', async (req, res) => {
 
         return res.status(200).send('Streaming started successfully.');
     } catch (streamError) {
-        console.error('Error while streaming:', streamError);
+        logMessage("Error while streaming", `${streamError}`);
         return res.status(500).send('Failed to start streaming.');
     }
 });
@@ -131,13 +131,17 @@ app.post('/disconnect', async (req, res) => {
         await endExistingStream(streamer, command);
         streamer.leaveVoice();
         const successMessage = `Successfully disconnected and stopped the stream.`;
-        console.log(`[${new Date().toISOString()}] Endpoint: /disconnect - ${successMessage}
-            User: ${user.name} (ID: ${user.id})`);
+        logMessage("Endpoint: /disconnect", `
+            ${successMessage}
+            User: ${user.name} (ID: ${user.id})
+        `);
         return res.status(200).send(successMessage);
     } catch (error) {
         const errorMessage = 'Failed to disconnect.';
-        console.error(`[${new Date().toISOString()}] Endpoint: /disconnect - Error: ${errorMessage}
-            User: ${user.name} (ID: ${user.id}) - Error details:`, error);
+        logMessage("Endpoint: /disconnect - Error", `
+            ${errorMessage}
+            User: ${user.name} (ID: ${user.id}) - Error details: ${error}
+        `);
         return res.status(500).send(errorMessage);
     }
 });
@@ -164,12 +168,12 @@ async function startStream(streamUrl, udpConn, includeAudio) {
     try {
         command = streamLivestreamVideo(streamUrl, udpConn, includeAudio);
         const res = await command;
-        console.log("Finished playing video " + res);
+        logMessage("Finished playing video", `Result: ${res}`);
     } catch (e) {
         if (command.isCanceled) {
-            console.log('Stream was cancelled');
+            logMessage("Stream was cancelled", "");
         } else {
-            console.log(e);
+            logMessage("Error during streaming", `Error details: ${e}`);
         }
     } finally {
         udpConn.mediaConnection.setSpeaking(false);
@@ -312,4 +316,15 @@ function generateBitrateFromResolutionAndFramerate(height, width, framerate) {
         bitrateKbps: Math.round(bitrateKbps),
         maxBitrateKbps: Math.round(maxBitrateKbps),
     };
+}
+
+// worked on this only to realize I should just use a logger package TODO
+function logMessage(action, details = '') {
+    const timestamp = new Date().toISOString();
+    const formattedDetails = details
+        .trim()
+        .split('\n')
+        .map(line => `\t${line.trim()}`)
+        .join('\n');
+    console.log(`[${timestamp}] ${action}:${formattedDetails ? `\n${formattedDetails}` : ''}`);
 }
