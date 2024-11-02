@@ -11,13 +11,16 @@ services:
     privileged: true  
     environment:
         DISCORD_TOKEN: ""
-        #Optional Variables
-        HARDWARE_ACCELERATION: "true"
-        FPS: 30
-        MAX_FPS: 45
-        WIDTH: 1920
-        HEIGHT: 1080
-        BITRATE_KBPS: 3000
-        MAX_BITRATE_KBPS: 5000
-        H26X_PRESET: "medium"
-        READ_AT_NATIVE_FPS: "true"
+        # Optional Variables (will override any defaults and variables passed in API call)
+        FPS: ""
+        MAX_FPS: ""
+        WIDTH: ""
+        HEIGHT: ""
+        BITRATE_KBPS: ""
+        MAX_BITRATE_KBPS: ""
+        H26X_PRESET: ""
+        HARDWARE_ACCELERATION: ""
+        READ_AT_NATIVE_FPS: ""
+        RTCP_SENDER: ""
+        MINIMIZE_LATENCY: ""
+        FORCE_CHACHA: ""
