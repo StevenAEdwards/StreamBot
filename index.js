@@ -10,17 +10,16 @@ app.use(express.json());
 const port = process.env.PORT || 3123;
 
 app.listen(port, () => {
-    console.log(`API server is listening on port ${port}`);
+    logMessage("API server is listening", `Port: ${port}`);
 });
 
 // Discord Login
 const streamer = new Streamer(new Client());
 streamer.client.login(process.env.DISCORD_TOKEN);
 streamer.client.on('ready', () => {
-    console.log(`--- ${streamer.client.user.tag} is ready ---`);
+    logMessage("Bot is ready", `Bot Tag: ${streamer.client.user.tag}`);
 });
 
-let isPlayTimeoutActive = false;
 let command = new PCancelable((resolve, reject, onCancel) => {
     onCancel(() => {
         console.log('Promise was canceled');
@@ -30,17 +29,30 @@ let command = new PCancelable((resolve, reject, onCancel) => {
     }, 1000);
 });
 
+let isPlayTimeoutActive = false;
+
 
 app.post('/play', async (req, res) => {
-    const { guildId, channelId, streamURL, qualities } = req.body;
+    const { guildId, channelId, stream, qualities, user } = req.body;
 
-    if (!guildId || !channelId || !streamURL) {
-        return res.status(400).send('Missing required parameters: guildId, channelId, streamURL');
+    logMessage("Endpoint: /play", `
+        Server / Channel ID: ${guildId} / ${channelId}
+        User: ${user.name} (ID: ${user.id})
+        Stream Name: ${stream.name}
+        Stream URL: ${stream.url}
+        Qualities: ${JSON.stringify(qualities, null, 2)}
+    `);
+
+    if (!guildId || !channelId || !stream.url) {
+        const errorMessage = 'Missing required parameters: guildId, channelId, streamUrl';
+        logMessage("Response: 400 Bad Request", errorMessage);
+        return res.status(400).send(errorMessage);
     }
 
     if (isPlayTimeoutActive) {
-        console.log('Play command is currently in cooldown. Ignoring request.');
-        return res.status(429).send('Play command is in cooldown. Please try again in a few seconds.');
+        const message = 'Play command is in cooldown. Please try again in a few seconds.';
+        logMessage("Response: 429 Too Many Requests", message);
+        return res.status(429).send(message);
     }
 
     isPlayTimeoutActive = true;
@@ -49,77 +61,99 @@ app.post('/play', async (req, res) => {
     }, 5000);
 
     const guild = streamer.client.guilds.cache.get(guildId);
-    if (!guild) return res.status(404).send('Guild not found.');
+    const channel = guild?.channels.cache.get(channelId);
 
-    const channel = guild.channels.cache.get(channelId);
-    if (!channel || channel.type !== 'GUILD_VOICE') {
-        return res.status(404).send('Voice channel not found or invalid.');
+    if (!guild || !channel || channel.type !== 'GUILD_VOICE') {
+        const message = !guild
+            ? 'Guild not found.'
+            : 'Voice channel not found or invalid.';
+        logMessage("Response: 404 Not Found", message);
+        return res.status(404).send(message);
     }
 
     let streamOptions, includeAudio;
     try {
-        let metadata = await getInputMetadata(streamURL);
+        let metadata = await getInputMetadata(stream.url);
         let videoStream = metadata.streams.find(stream => stream.codec_type === 'video');
-
         if (!videoStream) {
             throw new Error('No video stream found in the metadata');
         }
-
+        streamOptions = generateStreamOptions(qualities, videoStream);
         includeAudio = inputHasAudio(metadata);
-        streamOptions = generateStreamOptions(qualities, videoStream)
     } catch (e) {
-        console.log(`[${new Date().toISOString()}] Error encountered while fetching metadata or generating stream options:`, e);
-        return res.status(500).send('Error encountered while fetching metadata or generating stream options');
+        const message = 'Error encountered while fetching metadata or generating stream options';
+        logMessage("Response: 500 Internal Server Error", `${message}\nError details: ${e}`);
+        return res.status(500).send(message);
     }
 
     try {
         const currentVoiceState = streamer.client.user.voice;
 
         if (currentVoiceState && currentVoiceState.channelId !== channelId) {
-            console.log(`Joining voice channel ${guildId}/${channelId}`);
+            logMessage("Action: Joining voice channel", `
+                Server ID: ${guildId}
+                Target Channel ID: ${channelId}
+            `);
             await streamer.joinVoice(guildId, channelId);
         }
 
-        if (!streamer.voiceConnection){
-            return res.status(409).send('Desync: Please kick detached Stream Bot instance and try again');
+        if (!streamer.voiceConnection) {
+            const botUserId = streamer.client.user.id;
+            const message = `Desync: Please kick detached Stream Bot instance with User ID ${botUserId} and try again.`;
+            logMessage("Response: 409 Conflict", message);
+            return res.status(409).json({ message, botUserId });
         }
 
-        //end current stream
         if (currentVoiceState && currentVoiceState.streaming) {
-            await cancelExistingCommand(command);
-            streamer.stopStream();
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            endExistingStream(streamer, command);
         }
 
         const streamUdpConn = await streamer.createStream(streamOptions);
-        startStream(streamURL, streamUdpConn, includeAudio);
 
+        logMessage("Starting video stream", `
+            Stream URL: ${stream.url}
+            Stream Options: ${JSON.stringify(streamUdpConn._mediaConnection._streamOptions, null, 2)}
+        `);
+
+        startStream(stream.url, streamUdpConn, includeAudio);
         await new Promise(resolve => setTimeout(resolve, 2000));
 
         return res.status(200).send('Streaming started successfully.');
     } catch (streamError) {
-        console.error('Error while streaming:', streamError);
+        logMessage("Error while streaming", `${streamError}`);
         return res.status(500).send('Failed to start streaming.');
     }
 });
 
 app.post('/disconnect', async (req, res) => {
+    const { user } = req.body;
     try {
-        command?.cancel();
-        streamer.stopStream();
-        await streamer.leaveVoice();
-        return res.status(200).send('Successfully disconnected and stopped the stream.');
+        await endExistingStream(streamer, command);
+        streamer.leaveVoice();
+        const successMessage = `Successfully disconnected and stopped the stream.`;
+        logMessage("Endpoint: /disconnect", `
+            ${successMessage}
+            User: ${user.name} (ID: ${user.id})
+        `);
+        return res.status(200).send(successMessage);
     } catch (error) {
-        console.error('Error during disconnect:', error);
-        return res.status(500).send('Failed to disconnect.');
+        const errorMessage = 'Failed to disconnect.';
+        logMessage("Endpoint: /disconnect - Error", `
+            ${errorMessage}
+            User: ${user.name} (ID: ${user.id}) - Error details: ${error}
+        `);
+        return res.status(500).send(errorMessage);
     }
 });
 
-function cancelExistingCommand(command) {
+function endExistingStream(streamer, command) {
     return new Promise((resolve, reject) => {
         try {
             command.cancel();
-            resolve();
+            streamer.stopStream();
+            setTimeout(() => {
+                resolve();
+            }, 1000);
         } catch (error) {
             reject(error);
         }
@@ -128,20 +162,18 @@ function cancelExistingCommand(command) {
 
 async function startStream(streamUrl, udpConn, includeAudio) {
 
-    console.log(`[${new Date().toISOString()}] Starting video stream - Stream URL: ${streamUrl} - Stream Options: ${JSON.stringify(udpConn._mediaConnection._streamOptions)}`);
-
     udpConn.mediaConnection.setSpeaking(true);
     udpConn.mediaConnection.setVideoStatus(true);
 
     try {
         command = streamLivestreamVideo(streamUrl, udpConn, includeAudio);
         const res = await command;
-        console.log("Finished playing video " + res);
+        logMessage("Finished playing video", `Result: ${res}`);
     } catch (e) {
         if (command.isCanceled) {
-            console.log('Stream was cancelled');
+            logMessage("Stream was cancelled", "");
         } else {
-            console.log(e);
+            logMessage("Error during streaming", `Error details: ${e}`);
         }
     } finally {
         udpConn.mediaConnection.setSpeaking(false);
@@ -149,40 +181,27 @@ async function startStream(streamUrl, udpConn, includeAudio) {
     }
 }
 
+// Generate settings with priority: environment variable > api parameters > default value
 function generateStreamOptions(qualities, videoStream) {
-    //WIDTH and HEIGHT
-    const inputHeight = videoStream.height;
-    const inputWidth = videoStream.width;
 
     const height = process.env.HEIGHT ? parseInt(process.env.HEIGHT, 10)
         : qualities?.height ? qualities.height
-            : inputHeight;
+            : videoStream.height;
 
     const width = process.env.WIDTH ? parseInt(process.env.WIDTH, 10)
         : qualities?.width ? qualities.width
-            : inputWidth;
+            : videoStream.width;
 
-    //FPS -- needs refactored
-    const frameRateParts = videoStream.avg_frame_rate.split('/');
-    const parsedFps = Math.floor(
-        frameRateParts.length === 2
-            ? parseInt(frameRateParts[0], 10) / parseInt(frameRateParts[1], 10)
-            : parseFloat(videoStream.avg_frame_rate)
-    );
+    const fps = (() => {
+        const envFps = process.env.FPS ? parseInt(process.env.FPS, 10) : null;
+        const qualityFps = qualities?.fps || null;
+        const parsedFps = envFps ?? qualityFps ?? parseFps(videoStream.avg_frame_rate);
 
-    const initialFps = process.env.FPS
-        ? parseInt(process.env.FPS, 10)
-        : qualities?.fps
-            ? qualities.fps
-            : parsedFps;
+        const maxFps = parseInt(process.env.MAX_FPS, 10);
+        return maxFps && parsedFps > maxFps ? maxFps : parsedFps;
+    })();
 
-    const fps = initialFps > process.env.MAX_FPS
-        ? process.env.MAX_FPS
-        : initialFps;
-
-    //BITRATE
-    const generatedBitrate = generateBitrateFromResolutionAndFramerate(height, width, fps);
-    const { bitrateKbps: generatedBitrateKbps, maxBitrateKbps: generatedMaxBitrateKbps } = generatedBitrate;
+    const { bitrateKbps: generatedBitrateKbps, maxBitrateKbps: generatedMaxBitrateKbps } = generateBitrateFromResolutionAndFramerate(height, width, fps);
 
     const bitrateKbps = process.env.BITRATE_KBPS
         ? parseInt(process.env.BITRATE_KBPS, 10)
@@ -196,11 +215,6 @@ function generateStreamOptions(qualities, videoStream) {
             ? qualities.maxBitrateKbps
             : generatedMaxBitrateKbps;
 
-    // hw accel
-    const hardwareAcceleratedDecoding =
-        process.env.HARDWARE_ACCELERATION !== 'false' && qualities?.hardwareAcceleratedDecoding !== 'false';
-
-    // video codec
     let videoCodec;
     if (videoStream.codec_name === 'vp8' || videoStream.codec_name === 'vp9') {
         videoCodec = 'VP8';
@@ -208,40 +222,68 @@ function generateStreamOptions(qualities, videoStream) {
         videoCodec = 'H264';
     }
 
-    // native fps (soon deprecated?)
-    const readAtNativeFps = process.env.READ_AT_NATIVE_FPS === 'true' || qualities?.readAtNativeFps === 'true';
-    
-    // rtcp sender report
-    const rtcpSenderReportEnabled = process.env.RTCP_SENDER === 'true' || qualities?.rtcpSenderReportEnabled === 'true';
-
-    // h26x preset 
     const h26xPreset = process.env.H26X_PRESET
         ? process.env.H26X_PRESET
         : qualities?.h26xPreset
             ? qualities.h26xPreset
             : "superfast";
 
-    // minimize latency 
-    const minimizeLatency = process.env.MINIMIZE_LATENCY !== 'false' && qualities?.minimizeLatency !== 'false';
+    const readAtNativeFps = getBooleanSetting(
+        process.env.READ_AT_NATIVE_FPS,
+        qualities?.readAtNativeFps,
+        false
+    );
 
-    // forceChacha20Encryption
-    const forceChacha20Encryption = process.env.FORCE_CHACHA === 'true' || qualities?.forceChacha20Encryption === 'true';
+    const rtcpSenderReportEnabled = getBooleanSetting(
+        process.env.RTCP_SENDER,
+        qualities?.rtcpSenderReportEnabled,
+        false
+    );
 
-    // Prepare final options object
+    const forceChacha20Encryption = getBooleanSetting(
+        process.env.FORCE_CHACHA,
+        qualities?.forceChacha20Encryption,
+        false
+    );
+
+    const hardwareAcceleratedDecoding = getBooleanSetting(
+        process.env.HARDWARE_ACCELERATION,
+        qualities?.hardwareAcceleratedDecoding,
+        true
+    );
+
+    const minimizeLatency = getBooleanSetting(
+        process.env.MINIMIZE_LATENCY,
+        qualities?.minimizeLatency,
+        true
+    );
+
     return {
         width,
         height,
         fps,
         bitrateKbps,
         maxBitrateKbps,
-        hardwareAcceleratedDecoding,
+        h26xPreset,
         videoCodec,
+        hardwareAcceleratedDecoding,
         readAtNativeFps,
         rtcpSenderReportEnabled,
-        h26xPreset,
         minimizeLatency,
         forceChacha20Encryption
     };
+}
+
+function parseFps(avgFrameRate) {
+    const [numerator, denominator] = avgFrameRate.split('/').map(Number);
+    return denominator ? Math.floor(numerator / denominator) : Math.floor(numerator);
+}
+
+function getBooleanSetting(envVar, qualityVar, defaultValue) {
+    const envValue = envVar === 'true' ? true : envVar === 'false' ? false : undefined;
+    const qualityValue = qualityVar === 'true' ? true : qualityVar === 'false' ? false : undefined;
+
+    return envValue ?? qualityValue ?? defaultValue;
 }
 
 function generateBitrateFromResolutionAndFramerate(height, width, framerate) {
@@ -274,4 +316,15 @@ function generateBitrateFromResolutionAndFramerate(height, width, framerate) {
         bitrateKbps: Math.round(bitrateKbps),
         maxBitrateKbps: Math.round(maxBitrateKbps),
     };
+}
+
+// worked on this only to realize I should just use a logger package TODO
+function logMessage(action, details = '') {
+    const timestamp = new Date().toISOString();
+    const formattedDetails = details
+        .trim()
+        .split('\n')
+        .map(line => `\t${line.trim()}`)
+        .join('\n');
+    console.log(`[${timestamp}] ${action}:${formattedDetails ? `\n${formattedDetails}` : ''}`);
 }
