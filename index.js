@@ -228,12 +228,6 @@ function generateStreamOptions(qualities, videoStream) {
             ? qualities.h26xPreset
             : "superfast";
 
-    const readAtNativeFps = getBooleanSetting(
-        process.env.READ_AT_NATIVE_FPS,
-        qualities?.readAtNativeFps,
-        false
-    );
-
     const rtcpSenderReportEnabled = getBooleanSetting(
         process.env.RTCP_SENDER,
         qualities?.rtcpSenderReportEnabled,
@@ -267,7 +261,6 @@ function generateStreamOptions(qualities, videoStream) {
         h26xPreset,
         videoCodec,
         hardwareAcceleratedDecoding,
-        readAtNativeFps,
         rtcpSenderReportEnabled,
         minimizeLatency,
         forceChacha20Encryption
