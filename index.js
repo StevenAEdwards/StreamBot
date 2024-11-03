@@ -105,7 +105,7 @@ app.post('/play', async (req, res) => {
         }
 
         if (currentVoiceState && currentVoiceState.streaming) {
-            endExistingStream(streamer, command);
+            await endExistingStream(streamer, command);
         }
 
         const streamUdpConn = await streamer.createStream(streamOptions);
