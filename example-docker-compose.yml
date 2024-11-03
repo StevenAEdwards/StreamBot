@@ -20,7 +20,6 @@ services:
         MAX_BITRATE_KBPS: ""
         H26X_PRESET: ""
         HARDWARE_ACCELERATION: ""
-        READ_AT_NATIVE_FPS: ""
         RTCP_SENDER: ""
         MINIMIZE_LATENCY: ""
         FORCE_CHACHA: ""
