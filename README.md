@@ -1,5 +1,7 @@
-
-# Streambot API Docker Container Documentation
+<div align="center">
+    <img src="https://github.com/user-attachments/assets/b86a6620-25cb-4788-b5bc-97806dd1d33a" alt="Description" width="100" height="100">
+    <h1>Streambot API Docker Container Documentation</h1>
+</div>
 
 ## Overview
 
