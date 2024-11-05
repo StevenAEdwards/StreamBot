@@ -5,9 +5,9 @@
 
 ## Overview
 
-Streambot is a self-hosted Node.js Discord self-bot for streaming content directly to Discord voice channels. Deploying via Docker, you can configure stream quality, frame rate, and latency. Note that Streambot functions as a self-bot, meaning it operates using a user account token, not a bot token, to access features that are typically unavailable to traditional bots.
+Streambot is a self-hosted Node.js Discord self-bot designed to stream content directly to Discord voice channels. It deploys easily via Docker, allowing you to configure stream quality, frame rate, and latency. Note that Streambot operates as a self-bot, meaning it uses a user account token (rather than a bot token) to access certain features typically unavailable to standard Discord bots.
 
-This project is built in tandem with [RemoteBot](https://github.com/StevenAEdwards/RemoteBot), a companion bot that allows users to browse and manage `.m3u` stream files through Discord commands.
+This project is developed alongside the in-progress RemoteBot, a companion bot that enables users to browse and manage .m3u stream files directly through Discord commands.
 
 > **Disclaimer**: Self-bots operate using a user account, which is against Discord's Terms of Service. Using a self-bot can result in your account being flagged or banned. Proceed with caution and use at your own risk.
 
