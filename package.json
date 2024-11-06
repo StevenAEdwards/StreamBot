@@ -1,6 +1,6 @@
 {
   "name": "streambot",
-  "version": "1.0.2",
+  "version": "1.0.3-SNAPSHOT",
   "description": "",
   "main": "index.js",
   "type": "module",
