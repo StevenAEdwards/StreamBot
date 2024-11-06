@@ -3,15 +3,12 @@ name: Docker
 on:
   push:
     branches: [ "main" ]
-    tags: [ 'v*.*.*' ]
-  pull_request:
-    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write
 
@@ -27,19 +24,18 @@ jobs:
         run: |
           VERSION=$(jq -r '.version' package.json)
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-
-      # Install the cosign tool except on PR
-      - name: Install cosign
-        if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
-        with:
-          cosign-release: 'v2.2.4'
+          if [[ "$VERSION" == *"SNAPSHOT"* ]]; then
+            echo "IS_SNAPSHOT=true" >> $GITHUB_ENV
+          else
+            echo "IS_SNAPSHOT=false" >> $GITHUB_ENV
+          fi
 
       - name: Set up Docker Buildx
+        if: env.IS_SNAPSHOT == 'false'
         uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
 
       - name: Log into registry ${{ vars.REGISTRY }}
-        if: github.event_name != 'pull_request'
+        if: env.IS_SNAPSHOT == 'false'
         uses: docker/login-action@v2
         with:
           registry: ${{ vars.REGISTRY }}
@@ -47,20 +43,47 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
       - name: Build and push Docker image
+        if: env.IS_SNAPSHOT == 'false'
         id: build-and-push
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: |
             ${{ vars.REGISTRY }}/${{ vars.IMAGE_NAME }}:${{ env.VERSION }}
             ${{ vars.REGISTRY }}/${{ vars.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Install cosign
+        if: env.IS_SNAPSHOT == 'false'
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
+        with:
+          cosign-release: 'v2.2.4'
+
       - name: Sign the published Docker image
-        if: ${{ github.event_name != 'pull_request' }}
+        if: env.IS_SNAPSHOT == 'false' 
         env:
-          TAGS: ${{ steps.meta.outputs.tags }}
+          TAGS: ${{ steps.build-and-push.outputs.tags }}
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+
+      - name: Increment version and add -SNAPSHOT
+        if: env.IS_SNAPSHOT == 'false'
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}-SNAPSHOT"
+          jq --arg new_version "$NEW_VERSION" '.version = $new_version' package.json > tmp.json && mv tmp.json package.json
+          echo "Updated version to $NEW_VERSION"
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: Commit and push updated version
+        if: env.IS_SNAPSHOT == 'false'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "Increment version to $NEW_VERSION for future development"
+          git push origin main
