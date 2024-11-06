@@ -3,7 +3,6 @@ name: Docker
 on:
   push:
     branches: [ "main" ]
-    tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ "main" ]
 
@@ -11,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write
 
@@ -51,7 +50,7 @@ jobs:
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' && env.IS_SNAPSHOT == 'false' }}
+          push: true
           tags: |
             ${{ vars.REGISTRY }}/${{ vars.IMAGE_NAME }}:${{ env.VERSION }}
             ${{ vars.REGISTRY }}/${{ vars.IMAGE_NAME }}:latest
@@ -70,3 +69,23 @@ jobs:
           TAGS: ${{ steps.build-and-push.outputs.tags }}
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+
+      - name: Increment version and add -SNAPSHOT
+        if: github.event_name != 'pull_request' && env.IS_SNAPSHOT == 'false'
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}-SNAPSHOT"
+          jq --arg new_version "$NEW_VERSION" '.version = $new_version' package.json > tmp.json && mv tmp.json package.json
+          echo "Updated version to $NEW_VERSION"
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: Commit and push updated version
+        if: github.event_name != 'pull_request' && env.IS_SNAPSHOT == 'false'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "Increment version to $NEW_VERSION for future development"
+          git push origin main
